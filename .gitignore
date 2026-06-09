@@ -1,0 +1,21 @@
+# Credenciales — NUNCA subir
+config.ini
+emqxsl-ca.crt
+
+# Binarios compilados
+alarm_processor
+*.o
+
+# ONNX Runtime (muy grande, se descarga por separado)
+onnxruntime/
+
+# Carpeta versión sin EMQX
+SinEMQX/
+
+# Archivos viejos
+imap_old.c
+
+# Logs y datos
+*.log
+*.tsv
+alarma_imagenes/
