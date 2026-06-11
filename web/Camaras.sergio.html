@@ -1,0 +1,342 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Alarma Camaras</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/mqtt/5.3.4/mqtt.min.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+
+  :root {
+    --armed:    #c0392b;
+    --disarmed: #27ae60;
+    --neutral:  #2c3e50;
+    --bg:       #1a1a2e;
+    --card:     #16213e;
+    --text:     #eaeaea;
+    --subtext:  #8899aa;
+  }
+
+  body {
+    font-family: -apple-system, 'SF Pro Display', sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    user-select: none;
+  }
+
+  .card {
+    background: var(--card);
+    border-radius: 24px;
+    padding: 40px 32px;
+    width: 100%;
+    max-width: 360px;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 32px;
+  }
+
+  .title {
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: 3px;
+    text-transform: uppercase;
+    color: var(--subtext);
+  }
+
+  .user-badge {
+    font-size: 11px;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    color: var(--subtext);
+    margin-top: -20px;
+  }
+
+  /* Estado */
+  .state-circle {
+    width: 160px;
+    height: 160px;
+    border-radius: 50%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.4s ease, box-shadow 0.4s ease;
+    background: var(--neutral);
+    box-shadow: 0 0 0 0 transparent;
+  }
+
+  .state-circle.armed {
+    background: var(--armed);
+    box-shadow: 0 0 40px rgba(192,57,43,0.5);
+    animation: pulse-red 2s infinite;
+  }
+
+  .state-circle.disarmed {
+    background: var(--disarmed);
+    box-shadow: 0 0 30px rgba(39,174,96,0.4);
+  }
+
+  @keyframes pulse-red {
+    0%, 100% { box-shadow: 0 0 40px rgba(192,57,43,0.5); }
+    50%       { box-shadow: 0 0 70px rgba(192,57,43,0.8); }
+  }
+
+  .state-icon { font-size: 48px; line-height: 1; }
+  .state-label {
+    font-size: 14px;
+    font-weight: 700;
+    letter-spacing: 3px;
+    text-transform: uppercase;
+    margin-top: 8px;
+  }
+
+  /* Botones */
+  .buttons {
+    display: flex;
+    gap: 16px;
+    width: 100%;
+  }
+
+  .btn {
+    flex: 1;
+    padding: 18px 0;
+    border: none;
+    border-radius: 16px;
+    font-size: 14px;
+    font-weight: 700;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    cursor: pointer;
+    transition: transform 0.1s, opacity 0.2s;
+    -webkit-appearance: none;
+  }
+
+  .btn:active { transform: scale(0.96); }
+  .btn:disabled { opacity: 0.3; cursor: not-allowed; }
+
+  .btn-arm {
+    background: var(--armed);
+    color: white;
+  }
+
+  .btn-disarm {
+    background: var(--disarmed);
+    color: white;
+  }
+
+  /* Conexión */
+  .conn-status {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+    color: var(--subtext);
+  }
+
+  .conn-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #555;
+    transition: background 0.3s;
+  }
+
+  .conn-dot.ok  { background: #27ae60; }
+  .conn-dot.err { background: #c0392b; }
+  .conn-dot.connecting {
+    background: #f39c12;
+    animation: blink 1s infinite;
+  }
+
+  @keyframes blink {
+    0%, 100% { opacity: 1; } 50% { opacity: 0.3; }
+  }
+
+  .last-update {
+    font-size: 11px;
+    color: var(--subtext);
+    text-align: center;
+  }
+</style>
+</head>
+<body>
+
+<div class="card">
+  <div>
+    <div class="title">Alarma Cámaras</div>
+  </div>
+  <div class="user-badge" id="userBadge">···</div>
+
+  <div class="state-circle" id="stateCircle">
+    <div class="state-icon" id="stateIcon">🔒</div>
+    <div class="state-label" id="stateLabel">···</div>
+  </div>
+
+  <div class="buttons">
+    <button class="btn btn-arm"    id="btnArm"    onclick="sendCmd('ARMAR')"   disabled>ARMAR</button>
+    <button class="btn btn-disarm" id="btnDisarm" onclick="sendCmd('DESARMAR')" disabled>DESARMAR</button>
+  </div>
+
+  <div class="conn-status">
+    <div class="conn-dot connecting" id="connDot"></div>
+    <span id="connLabel">Conectando...</span>
+  </div>
+
+  <div class="last-update" id="lastUpdate"></div>
+</div>
+
+<script>
+// ═══════════════════════════════════════════════════════════
+// CONFIGURACIÓN — completar antes de distribuir
+// ═══════════════════════════════════════════════════════════
+const MQTT_HOST     = 'k01645d9.ala.us-east-1.emqxsl.com';
+const MQTT_PORT     = 8084;  // WebSocket TLS
+const MQTT_USER     = 'cam_sergio';                  // <-- usuario
+const MQTT_PASS     = 'nnxy7h5vM717';  // <-- password
+const AES_KEY_HEX   = '23c2d69898ac4a535533a610929db169116a52fd19e422a2fb2a025520e49b63'; // <-- clave AES
+
+const TOPIC_STATE   = 'alarma/camaras/estado';
+const TOPIC_CMD     = 'alarma/camaras/cmd/sergio';
+// ═══════════════════════════════════════════════════════════
+
+// Convertir hex a ArrayBuffer
+function hexToBytes(hex) {
+  const arr = new Uint8Array(hex.length / 2);
+  for (let i = 0; i < arr.length; i++)
+    arr[i] = parseInt(hex.substr(i*2, 2), 16);
+  return arr;
+}
+
+// Importar clave AES
+async function importKey() {
+  return await crypto.subtle.importKey(
+    'raw', hexToBytes(AES_KEY_HEX),
+    { name: 'AES-GCM' }, false, ['encrypt', 'decrypt']
+  );
+}
+
+// Descifrar Base64 → texto
+async function decrypt(b64) {
+  try {
+    const key = await importKey();
+    const raw = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
+    const iv         = raw.slice(0, 12);
+    const tag        = raw.slice(12, 28);
+    const ciphertext = raw.slice(28);
+    // AES-GCM en WebCrypto espera ciphertext+tag concatenados
+    const combined = new Uint8Array(ciphertext.length + tag.length);
+    combined.set(ciphertext); combined.set(tag, ciphertext.length);
+    const plainBuf = await crypto.subtle.decrypt(
+      { name: 'AES-GCM', iv, tagLength: 128 }, key, combined
+    );
+    return new TextDecoder().decode(plainBuf);
+  } catch(e) { return null; }
+}
+
+// Cifrar texto → Base64
+async function encrypt(text) {
+  const key = await importKey();
+  const iv  = crypto.getRandomValues(new Uint8Array(12));
+  const enc = new TextEncoder().encode(text);
+  const ciphered = await crypto.subtle.encrypt(
+    { name: 'AES-GCM', iv, tagLength: 128 }, key, enc
+  );
+  // WebCrypto devuelve ciphertext+tag juntos (últimos 16 bytes = tag)
+  const ct  = new Uint8Array(ciphered);
+  const tag = ct.slice(ct.length - 16);
+  const body = ct.slice(0, ct.length - 16);
+  const combined = new Uint8Array(12 + 16 + body.length);
+  combined.set(iv); combined.set(tag, 12); combined.set(body, 28);
+  return btoa(String.fromCharCode(...combined));
+}
+
+// ─── UI helpers ────────────────────────────────────────────
+function setUI(state) {
+  const circle  = document.getElementById('stateCircle');
+  const icon    = document.getElementById('stateIcon');
+  const label   = document.getElementById('stateLabel');
+  const btnArm  = document.getElementById('btnArm');
+  const btnDis  = document.getElementById('btnDisarm');
+
+  circle.className = 'state-circle';
+  if (state === 'ARMADA') {
+    circle.classList.add('armed');
+    icon.textContent  = '🔴';
+    label.textContent = 'ARMADA';
+    btnArm.disabled   = true;
+    btnDis.disabled   = false;
+  } else if (state === 'DESARMADA') {
+    circle.classList.add('disarmed');
+    icon.textContent  = '🟢';
+    label.textContent = 'DESARMADA';
+    btnArm.disabled   = false;
+    btnDis.disabled   = true;
+  } else {
+    icon.textContent  = '🔒';
+    label.textContent = '···';
+    btnArm.disabled   = true;
+    btnDis.disabled   = true;
+  }
+  const now = new Date();
+  document.getElementById('lastUpdate').textContent =
+    'Actualizado: ' + now.toLocaleTimeString('es-AR');
+}
+
+function setConn(status) {
+  const dot   = document.getElementById('connDot');
+  const label = document.getElementById('connLabel');
+  dot.className = 'conn-dot';
+  if (status === 'ok') {
+    dot.classList.add('ok');   label.textContent = 'Conectado';
+  } else if (status === 'err') {
+    dot.classList.add('err');  label.textContent = 'Sin conexión';
+  } else {
+    dot.classList.add('connecting'); label.textContent = 'Conectando...';
+  }
+}
+
+// ─── MQTT ───────────────────────────────────────────────────
+document.getElementById('userBadge').textContent = MQTT_USER;
+
+const client = mqtt.connect(`wss://${MQTT_HOST}:${MQTT_PORT}/mqtt`, {
+  username:  MQTT_USER,
+  password:  MQTT_PASS,
+  clientId:  'iphone_' + MQTT_USER + '_' + Math.random().toString(16).slice(2,8),
+  rejectUnauthorized: true,
+  reconnectPeriod: 3000,
+});
+
+client.on('connect', () => {
+  setConn('ok');
+  client.subscribe(TOPIC_STATE, { qos: 1 });
+});
+
+client.on('disconnect', () => setConn('err'));
+client.on('error',      () => setConn('err'));
+client.on('reconnect',  () => setConn('connecting'));
+
+client.on('message', async (topic, payload) => {
+  if (topic === TOPIC_STATE) {
+    const plain = await decrypt(payload.toString());
+    if (plain) setUI(plain);
+  }
+});
+
+async function sendCmd(cmd) {
+  const encrypted = await encrypt(cmd);
+  client.publish(TOPIC_CMD, encrypted, { qos: 1 });
+}
+</script>
+</body>
+</html>
