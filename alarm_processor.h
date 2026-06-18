@@ -11,7 +11,7 @@
  * ============================================================ */
 #define MAX_CAMERAS         16
 #define MAX_AREAS           16
-#define MAX_EMAILS_BATCH    1
+#define MAX_EMAILS_BATCH    20
 #define MAX_IMAGES_PER_EMAIL 8
 #define MAX_IMAGES_BUFFER   64
 #define MAX_SUBJECT_LEN     256
@@ -70,7 +70,8 @@ typedef struct {
     char mqtt_aes_key_hex[65];  /* 32 bytes = 64 hex chars + \0 */
 
     /* Sistema */
-    int  cycle_seconds;
+    int  intervalo_minimo_seg;
+    int  demora_armado_seg;
     char log_level[16];
     char log_file[MAX_PATH_LEN];
     char log_detecciones[MAX_PATH_LEN];
@@ -136,6 +137,8 @@ typedef struct {
     void        *onnx_session;
     void        *onnx_env;
     int          running;
+    time_t      arm_timestamp;   /* momento en que se armó el sistema */
+    volatile int    gracia_activa;   /* 1 durante periodo post-armado */
     pthread_mutex_t gpio_lock;
 
     /* Estado de armado — compartido entre hilo MQTT y loop principal */
@@ -154,6 +157,7 @@ void config_print(const Config *cfg);
  * ============================================================ */
 int  imap_fetch_unread(AppContext *ctx, Email *emails, int max_emails);
 int  imap_mark_read(AppContext *ctx, const char *uid);
+int imap_mark_all_read(AppContext *ctx);
 
 /* ============================================================
  * Prototipos — clasificador
@@ -180,6 +184,7 @@ void burst_check_timeouts(AppContext *ctx);
 int  gpio_init(AppContext *ctx);
 void gpio_trigger_frente(AppContext *ctx);   /* con demora, no bloqueante */
 void gpio_trigger_fondo(AppContext *ctx);    /* inmediato, no bloqueante */
+void gpio_trigger_frente_test(AppContext *ctx);  /* sin demora, solo para prueba */
 void gpio_cleanup(AppContext *ctx);
 
 /* ============================================================
@@ -187,6 +192,13 @@ void gpio_cleanup(AppContext *ctx);
  * ============================================================ */
 int  mqtt_alarm_init(AppContext *ctx);
 void mqtt_alarm_cleanup(AppContext *ctx);
+
+
+/* ============================================================
+ * Prototipos — burst_reset_area
+ * ============================================================ */
+void burst_reset_area(AppContext *ctx, int area_idx);
+
 
 /* Helper para cambiar estado de armado desde cualquier hilo */
 void alarm_set_state(AppContext *ctx, AlarmState new_state, const char *source);

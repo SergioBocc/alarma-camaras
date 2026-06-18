@@ -18,4 +18,7 @@
 /* GPIO salida — LED indicador de estado armado */
 #define HW_GPIO_LED_PIN      22
 
+/* GPIO entrada — boton de prueba (pull-up externo 10K a 3.3V) */
+#define HW_GPIO_TEST_PIN     24
+
 #endif /* HARDWARE_H */

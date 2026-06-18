@@ -56,6 +56,12 @@ static void burst_reset(BurstBuffer *buf, const char *area_name) {
     log_msg(LOG_DEBUG, "burst: reset área '%s'", area_name);
 }
 
+void burst_reset_area(AppContext *ctx, int area_idx) {
+    if (area_idx < 0 || area_idx >= ctx->num_areas) return;
+    BurstBuffer *buf = &ctx->buffers[area_idx];
+    burst_reset(buf, ctx->area_names[area_idx]);
+}
+
 static void burst_open_window(BurstBuffer *buf, const char *area_name) {
     pthread_mutex_lock(&buf->lock);
     buf->active         = 1;

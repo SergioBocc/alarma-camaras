@@ -63,6 +63,9 @@ typedef struct {
     /* GPIO */
     struct gpiod_chip  *chip;
     struct gpiod_line  *button_line;
+    struct gpiod_line  *test_line;
+    pthread_t           test_thread;
+    int                 test_sequence;   /* 0=Frente, 1=Fondo */
     struct gpiod_line  *led_line;
 } MqttAlarmCtx;
 
@@ -329,6 +332,50 @@ static void *mqtt_thread_fn(void *arg) {
     return NULL;
 }
 
+static void *test_button_thread_fn(void *arg) {
+    MqttAlarmCtx *m = (MqttAlarmCtx *)arg;
+    int last_value = 1;
+    struct timespec last_press = {0};
+
+    while (m->running) {
+        int value = gpiod_line_get_value(m->test_line);
+        if (value < 0) { usleep(10000); continue; }
+
+        if (value == 0 && last_value == 1) {
+            struct timespec now;
+            clock_gettime(CLOCK_MONOTONIC, &now);
+            long elapsed_ms = (now.tv_sec - last_press.tv_sec) * 1000 +
+                              (now.tv_nsec - last_press.tv_nsec) / 1000000;
+
+            if (elapsed_ms > BUTTON_DEBOUNCE_MS) {
+                last_press = now;
+
+                if (alarm_get_state(m->ctx) == ALARM_ARMED) {
+                    log_msg(LOG_INFO, "test_btn: sistema ARMADO, boton ignorado");
+                } else {
+                    if (m->test_sequence == 0) {
+                        log_msg(LOG_WARNING, "test_btn: simulando deteccion FRENTE");
+                        gpio_trigger_frente_test(m->ctx);
+                        m->test_sequence = 1;
+                    } else {
+                        log_msg(LOG_WARNING, "test_btn: simulando deteccion FONDO");
+                        gpio_trigger_fondo(m->ctx);
+                        m->test_sequence = 0;
+                    }
+                }
+            }
+        }
+        last_value = value;
+        usleep(10000);
+    }
+    return NULL;
+}
+
+
+
+
+
+
 /* ------------------------------------------------------------------ */
 /* Hilo pulsador físico + LED                                           */
 /* ------------------------------------------------------------------ */
@@ -379,16 +426,24 @@ void alarm_set_state(AppContext *ctx, AlarmState new_state, const char *source) 
     pthread_mutex_lock(&ctx->alarm_state_lock);
     AlarmState old = ctx->alarm_state;
     ctx->alarm_state = new_state;
+    if (new_state == ALARM_ARMED) {
+            ctx->arm_timestamp = time(NULL);
+            ctx->gracia_activa = 1;
+            g_mctx.test_sequence = 0;
+    }
     pthread_mutex_unlock(&ctx->alarm_state_lock);
-
     if (old != new_state) {
         log_msg(LOG_INFO, "mqtt_alarm: estado cambiado → %s  (por: %s)",
-                (new_state == ALARM_ARMED) ? "ARMADA" : "DESARMADA",
-                source);
-        /* Actualizar LED si el módulo está inicializado */
+                (new_state == ALARM_ARMED) ? "ARMADA" : "DESARMADA", source);
         if (g_mctx.led_line)
             gpiod_line_set_value(g_mctx.led_line,
                                  (new_state == ALARM_ARMED) ? 1 : 0);
+        /* Registrar timestamp de armado */
+        if (new_state == ALARM_ARMED)
+            ctx->arm_timestamp = time(NULL);
+        /* Reset secuencia de prueba al armar */
+        if (new_state == ALARM_ARMED)
+            g_mctx.test_sequence = 0;
     }
 }
 
@@ -441,7 +496,19 @@ int mqtt_alarm_init(AppContext *ctx) {
                 HW_GPIO_LED_PIN);
         return -1;
     }
-
+    
+    /* Boton de prueba */
+    m->test_line = gpiod_chip_get_line(m->chip, HW_GPIO_TEST_PIN);
+    if (!m->test_line ||
+        gpiod_line_request_input_flags(m->test_line,
+                                        "test_button",
+                                        GPIOD_LINE_REQUEST_FLAG_BIAS_PULL_UP) < 0) {
+        log_msg(LOG_WARNING, "mqtt_alarm: boton prueba GPIO %d no disponible",
+                HW_GPIO_TEST_PIN);
+        m->test_line = NULL;
+    }
+    m->test_sequence = 0;
+    
     /* Estado inicial → DESARMADA, LED apagado */
     alarm_set_state(ctx, ALARM_DISARMED, "inicio");
     log_msg(LOG_INFO, "mqtt_alarm: GPIO pulsador=%d  LED=%d",
@@ -483,7 +550,8 @@ int mqtt_alarm_init(AppContext *ctx) {
     /* ── Hilos ──────────────────────────────────────────────────── */
     pthread_create(&m->mqtt_thread,   NULL, mqtt_thread_fn,   m);
     pthread_create(&m->button_thread, NULL, button_thread_fn, m);
-
+    if (m->test_line)
+        pthread_create(&m->test_thread, NULL, test_button_thread_fn, m);
     log_msg(LOG_INFO, "mqtt_alarm: módulo iniciado OK");
     return 0;
 }
@@ -495,7 +563,9 @@ void mqtt_alarm_cleanup(AppContext *ctx) {
 
     pthread_join(m->mqtt_thread,   NULL);
     pthread_join(m->button_thread, NULL);
-
+    
+    if (m->test_line)
+        pthread_join(m->test_thread, NULL);
     if (m->mosq) {
         mosquitto_disconnect(m->mosq);
         mosquitto_destroy(m->mosq);
@@ -504,6 +574,10 @@ void mqtt_alarm_cleanup(AppContext *ctx) {
 
     if (m->led_line)    { gpiod_line_set_value(m->led_line, 0);
                           gpiod_line_release(m->led_line); }
+    if (m->test_line) {
+        gpiod_line_release(m->test_line);
+        m->test_line = NULL;
+    }
     if (m->button_line)   gpiod_line_release(m->button_line);
     if (m->chip)          gpiod_chip_close(m->chip);
 

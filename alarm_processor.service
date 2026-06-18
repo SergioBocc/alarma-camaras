@@ -6,8 +6,8 @@ Wants=network-online.target
 [Service]
 Type=simple
 User=pi
-WorkingDirectory=/home/pi/alarm_processor
-ExecStart=/usr/local/bin/alarm_processor /home/pi/alarm_processor/config.ini
+WorkingDirectory=/home/pi/alarma_camaras
+ExecStart=/usr/local/bin/alarm_processor /home/pi/alarma_camaras/config.ini
 Restart=on-failure
 RestartSec=10
 

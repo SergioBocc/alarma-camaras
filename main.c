@@ -45,6 +45,22 @@ static void email_free_images(Email *e) {
 
 static void process_emails(AppContext *ctx, Email *emails, int count) {
     for (int i = 0; i < count; i++) {
+        /* Chequear período de gracia en cada email */
+       log_msg(LOG_INFO, "DBG: state=%d ts=%ld diff=%.0f demora=%d",
+                alarm_get_state(ctx), ctx->arm_timestamp,
+                difftime(time(NULL), ctx->arm_timestamp),
+                ctx->config.demora_armado_seg);
+        if (alarm_get_state(ctx) == ALARM_ARMED &&
+            ctx->arm_timestamp > 0 &&
+            difftime(time(NULL), ctx->arm_timestamp) < ctx->config.demora_armado_seg) {
+            log_msg(LOG_INFO, "main: periodo de gracia → marcando todo como leído");
+            imap_mark_all_read(ctx);
+            for (int j = i; j < count; j++)
+                email_free_images(&emails[j]);
+            for (int j = 0; j < ctx->num_areas; j++)
+                burst_reset_area(ctx, j);
+            return;
+        }
         Email *e = &emails[i];
 
         switch (e->type) {
@@ -90,35 +106,60 @@ static void process_emails(AppContext *ctx, Email *emails, int count) {
 /* ------------------------------------------------------------------ */
 
 static void run_loop(AppContext *ctx) {
-    //Email emails[MAX_EMAILS_BATCH];
     Email *emails = (Email *)malloc(MAX_EMAILS_BATCH * sizeof(Email));
     if (!emails) {
         log_msg(LOG_ERROR, "main: sin memoria para emails");
         return;
     }
-    log_msg(LOG_INFO, "main: iniciando ciclo  (intervalo=%ds)",
-            ctx->config.cycle_seconds);
+
+    log_msg(LOG_INFO, "main: iniciando ciclo  (intervalo minimo=%ds)",
+            ctx->config.intervalo_minimo_seg);
 
     while (g_running) {
-        /* 1. Consultar buzón IMAP */
-        int count = imap_fetch_unread(ctx, emails, MAX_EMAILS_BATCH);
+        struct timespec t_inicio, t_fin;
+        clock_gettime(CLOCK_MONOTONIC, &t_inicio);
 
-        if (count < 0) {
-            log_msg(LOG_ERROR, "main: error consultando IMAP, reintentando en %ds",
-                    ctx->config.cycle_seconds);
-        } else if (count > 0) {
-            log_msg(LOG_INFO, "main: %d correos clasificados", count);
-            process_emails(ctx, emails, count);
+        /* 1. Verificar período de gracia post-armado */
+        if (ctx->gracia_activa) {
+            log_msg(LOG_INFO, "main: periodo de gracia — esperando %ds",
+                    ctx->config.demora_armado_seg);
+            sleep(ctx->config.demora_armado_seg);
+            log_msg(LOG_INFO, "main: periodo de gracia — marcando todo como leído");
+            imap_mark_all_read(ctx);
+            for (int i = 0; i < ctx->num_areas; i++)
+                burst_reset_area(ctx, i);
+            ctx->gracia_activa = 0;
+        } else {
+            /* 2. Consultar buzón IMAP y procesar */
+            int count = imap_fetch_unread(ctx, emails, MAX_EMAILS_BATCH);
+
+            if (count < 0) {
+                log_msg(LOG_ERROR, "main: error consultando IMAP");
+            } else if (count > 0) {
+                log_msg(LOG_INFO, "main: %d correos clasificados", count);
+                process_emails(ctx, emails, count);
+            }
         }
-
-        /* 2. Verificar timeouts de ventanas de ráfaga */
+        /* 3. Verificar timeouts de ventanas */
         burst_check_timeouts(ctx);
 
-        /* 3. Esperar hasta el próximo ciclo */
-        if (g_running) {
-            sleep((unsigned int)ctx->config.cycle_seconds);
+        /* 4. Calcular tiempo transcurrido y dormir el resto */
+        clock_gettime(CLOCK_MONOTONIC, &t_fin);
+        long elapsed_ms = (t_fin.tv_sec - t_inicio.tv_sec) * 1000 +
+                          (t_fin.tv_nsec - t_inicio.tv_nsec) / 1000000;
+        long intervalo_ms = ctx->config.intervalo_minimo_seg * 1000L;
+
+        if (elapsed_ms < intervalo_ms && g_running) {
+            long sleep_ms = intervalo_ms - elapsed_ms;
+            log_msg(LOG_DEBUG, "main: procesado en %ldms, durmiendo %ldms",
+                    elapsed_ms, sleep_ms);
+            usleep((useconds_t)(sleep_ms * 1000));
+        } else {
+            log_msg(LOG_DEBUG, "main: procesado en %ldms, consulta inmediata",
+                    elapsed_ms);
         }
     }
+
     free(emails);
     log_msg(LOG_INFO, "main: ciclo detenido");
 }

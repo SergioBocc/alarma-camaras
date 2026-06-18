@@ -102,6 +102,13 @@ int gpio_init(AppContext *ctx) {
     return 0;
 }
 
+void gpio_trigger_frente_test(AppContext *ctx) {
+    if (!g_line_frente) { log_msg(LOG_ERROR, "gpio: línea Frente no inicializada"); return; }
+    int pulse_ms = ctx->config.gpio_pulse_seconds * 1000;
+    fire_pulse(g_line_frente, pulse_ms, 0, &ctx->gpio_lock, "Frente-TEST");
+}
+
+
 void gpio_trigger_frente(AppContext *ctx) {
     if (!g_line_frente) { log_msg(LOG_ERROR, "gpio: línea Frente no inicializada"); return; }
     int pulse_ms = ctx->config.gpio_pulse_seconds * 1000;

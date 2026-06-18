@@ -491,6 +491,11 @@ int imap_fetch_unread(AppContext *ctx, Email *emails, int max_emails) {
 
     int fetched = 0;
     for (int i = 0; i < uid_count && fetched < max_emails; i++) {
+        /* Abortar si se activó período de gracia */
+        if (ctx->gracia_activa) {
+            log_msg(LOG_INFO, "imap: abortando fetch por periodo de gracia");
+            break;
+        }
         Email *e = &emails[fetched];
         memset(e, 0, sizeof(Email));
         strncpy(e->uid, uids[i], 63);
@@ -554,6 +559,37 @@ int imap_fetch_unread(AppContext *ctx, Email *emails, int max_emails) {
     free(uids);
     return fetched;
 }
+
+int imap_mark_all_read(AppContext *ctx) {
+    const Config *cfg = &ctx->config;
+    CURL *curl = curl_create(cfg);
+    if (!curl) return -1;
+
+    CurlBuf buf;
+    curlbuf_init(&buf);
+
+    char url[MAX_STR * 2];
+    snprintf(url, sizeof(url), "imaps://%s:%d/%s",
+             cfg->imap_server, cfg->imap_port, cfg->imap_folder);
+
+    curl_easy_setopt(curl, CURLOPT_URL,           url);
+    curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, "UID STORE 1:* +FLAGS (\\Seen)");
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curlbuf_write);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA,     &buf);
+
+    CURLcode res = curl_easy_perform(curl);
+    curl_easy_cleanup(curl);
+    curlbuf_free(&buf);
+
+    if (res != CURLE_OK) {
+        log_msg(LOG_ERROR, "imap: mark_all_read falló: %s", curl_easy_strerror(res));
+        return -1;
+    }
+
+    log_msg(LOG_INFO, "imap: todos los mensajes marcados como leídos");
+    return 0;
+}
+
 
 int imap_mark_read(AppContext *ctx, const char *uid) {
     const Config *cfg = &ctx->config;

@@ -1,7 +1,16 @@
 /*
  * config.c — Carga y valida la configuración desde config.ini
  */
-
+ 
+/*  Las credenciales para los usuarios de EMQX son:
+    cam_agustina     R8amv5AL20h@
+    cam_sergio       nnxy7h5vM717
+    cam_rpi          5JajQ102$nvp
+    cam_pedro	     695bqtTawn%2
+    cam_maxi         ru4HH8tji&1s
+    cam_malva	     CkZ733#W1pgf
+    cam_android      dzci376knv?N
+*/
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -90,11 +99,12 @@ static int ini_callback(void *user, const char *section,
     else if (MATCH("mqtt", "aes_key"))  strncpy(cfg->mqtt_aes_key_hex, value, 64);
 
     /* ---- Sistema ---- */
-    else if (MATCH("sistema", "ciclo_segundos")) cfg->cycle_seconds = atoi(value);
+    else if (MATCH("sistema", "intervalo_minimo_seg")) cfg->intervalo_minimo_seg = atoi(value);
     else if (MATCH("sistema", "log_nivel"))      strncpy(cfg->log_level, value, 15);
     else if (MATCH("sistema", "log_archivo"))    strncpy(cfg->log_file,  value, MAX_PATH_LEN-1);
     else if (MATCH("sistema", "log_detecciones")) strncpy(cfg->log_detecciones, value, MAX_PATH_LEN-1);
     else if (MATCH("sistema", "dir_imagenes"))    strncpy(cfg->dir_imagenes,    value, MAX_PATH_LEN-1);
+    else if (MATCH("sistema", "demora_armado_seg")) cfg->demora_armado_seg = atoi(value);
 
 #undef MATCH
 #undef STARTS
@@ -109,8 +119,9 @@ static void config_defaults(Config *cfg) {
     cfg->detection_threshold = 3;
     cfg->gpio_pulse_seconds  = 1;
     cfg->mqtt_port           = 8883;
-    cfg->cycle_seconds       = 30;
+    cfg->intervalo_minimo_seg = 15;
     cfg->gpio_demora_frente_seg = 30;
+    cfg->demora_armado_seg = 60;
     strncpy(cfg->imap_folder, "INBOX",                MAX_STR-1);
     strncpy(cfg->log_level,   "INFO",                 15);
     strncpy(cfg->log_file,    "alarm_processor.log",  MAX_PATH_LEN-1);
@@ -147,6 +158,6 @@ void config_print(const Config *cfg) {
            HW_GPIO_BUTTON_PIN, HW_GPIO_LED_PIN,
            cfg->gpio_pulse_seconds, cfg->gpio_demora_frente_seg);
     printf("MQTT:       %s:%d  usuario=%s\n", cfg->mqtt_host, cfg->mqtt_port, cfg->mqtt_user);
-    printf("Ciclo:      %ds\n", cfg->cycle_seconds);
+    printf("Ciclo:      intervalo minimo=%ds  demora_armado=%ds\n", cfg->intervalo_minimo_seg, cfg->demora_armado_seg);
     printf("=============================\n");
 }
