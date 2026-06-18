@@ -118,17 +118,18 @@ static void run_loop(AppContext *ctx) {
     while (g_running) {
         struct timespec t_inicio, t_fin;
         clock_gettime(CLOCK_MONOTONIC, &t_inicio);
-
-        /* 1. Verificar período de gracia post-armado */
+        /* 1. Período de gracia post-armado */
         if (ctx->gracia_activa) {
-            log_msg(LOG_INFO, "main: periodo de gracia — esperando %ds",
+            log_msg(LOG_INFO, "main: periodo de gracia — suspendiendo %ds",
                     ctx->config.demora_armado_seg);
             sleep(ctx->config.demora_armado_seg);
-            log_msg(LOG_INFO, "main: periodo de gracia — marcando todo como leído");
-            imap_mark_all_read(ctx);
+            log_msg(LOG_INFO, "main: periodo de gracia — reseteando buffers");
             for (int i = 0; i < ctx->num_areas; i++)
                 burst_reset_area(ctx, i);
+            log_msg(LOG_INFO, "main: periodo de gracia — marcando todo como leído");
+            imap_mark_all_read(ctx);
             ctx->gracia_activa = 0;
+            log_msg(LOG_INFO, "main: periodo de gracia completado — retomando operación");
         } else {
             /* 2. Consultar buzón IMAP y procesar */
             int count = imap_fetch_unread(ctx, emails, MAX_EMAILS_BATCH);
