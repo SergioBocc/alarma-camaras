@@ -67,6 +67,7 @@ typedef struct {
     pthread_t           test_thread;
     int                 test_sequence;   /* 0=Frente, 1=Fondo */
     struct gpiod_line  *led_line;
+    time_t last_successful_publish;
 } MqttAlarmCtx;
 
 static MqttAlarmCtx g_mctx = {0};
@@ -304,6 +305,7 @@ static void on_connect(struct mosquitto *mosq, void *userdata, int rc) {
     log_msg(LOG_INFO, "mqtt_alarm: conectado a EMQX");
     mosquitto_subscribe(mosq, NULL, TOPIC_CMD_SUB, 1);
     publish_state(m);
+    m->last_successful_publish = time(NULL);
 }
 
 static void on_disconnect(struct mosquitto *mosq, void *userdata, int rc) {
@@ -314,7 +316,7 @@ static void on_disconnect(struct mosquitto *mosq, void *userdata, int rc) {
 /* ------------------------------------------------------------------ */
 /* Hilo MQTT                                                            */
 /* ------------------------------------------------------------------ */
-
+/***********se cambia este codigo el 010726
 static void *mqtt_thread_fn(void *arg) {
     MqttAlarmCtx *m = (MqttAlarmCtx *)arg;
     time_t last_publish = 0;
@@ -323,7 +325,7 @@ static void *mqtt_thread_fn(void *arg) {
         mosquitto_loop(m->mosq, 1000, 1);
 
         /* Republicar estado periódicamente */
-        time_t now = time(NULL);
+/**        time_t now = time(NULL);
         if (difftime(now, last_publish) >= STATE_REPUBLISH_S) {
             publish_state(m);
             last_publish = now;
@@ -331,6 +333,48 @@ static void *mqtt_thread_fn(void *arg) {
     }
     return NULL;
 }
+**/
+static void *mqtt_thread_fn(void *arg) {
+    MqttAlarmCtx *m = (MqttAlarmCtx *)arg;
+    time_t last_publish = 0;
+    time_t last_successful_publish = time(NULL);
+
+    while (m->running) {
+        mosquitto_loop(m->mosq, 1000, 1);
+
+        time_t now = time(NULL);
+
+        /* Republicar estado periódicamente */
+        if (difftime(now, last_publish) >= STATE_REPUBLISH_S) {
+            int rc = mosquitto_publish(m->mosq, NULL, TOPIC_STATE,
+                                       0, NULL, 1, true);
+            if (rc == MOSQ_ERR_SUCCESS || rc == MOSQ_ERR_NO_CONN) {
+                /* Si no hay conexión mosquitto lo maneja */
+                if (rc == MOSQ_ERR_SUCCESS)
+                    last_successful_publish = now;
+            }
+            publish_state(m);
+            last_publish = now;
+        }
+
+        /* Watchdog: si lleva mas de 3 minutos sin publicar exitosamente, reconectar */
+        if (difftime(now, last_successful_publish) > 180) {
+            log_msg(LOG_WARNING, "mqtt_alarm: watchdog — sin conexion por 3min, reconectando");
+            mosquitto_disconnect(m->mosq);
+            sleep(2);
+            int rc = mosquitto_reconnect(m->mosq);
+            if (rc != MOSQ_ERR_SUCCESS)
+                log_msg(LOG_ERROR, "mqtt_alarm: reconnect falló: %s", mosquitto_strerror(rc));
+            else
+                log_msg(LOG_INFO, "mqtt_alarm: reconnect OK");
+            last_successful_publish = now;
+        }
+    }
+    return NULL;
+}
+
+
+
 
 static void *test_button_thread_fn(void *arg) {
     MqttAlarmCtx *m = (MqttAlarmCtx *)arg;
